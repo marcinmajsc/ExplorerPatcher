@@ -60,7 +60,7 @@ jobs:
           persist-credentials: false
 
       - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # 2.0.0
+        uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # 3.0.0
 
       - name: Declare some variables
         id: vars
@@ -81,7 +81,7 @@ jobs:
           exit /b 0
 
       - name: Setup NuGet
-        uses: nuget/setup-nuget@323ab0502cd38fdc493335025a96c8fdb0edc71f # 2.0.1
+        uses: nuget/setup-nuget@12c57947e9458a5b976961b08ea0706a17dd71ae # 3.0.0
         with:
           nuget-version: '7.x'
 
@@ -120,6 +120,12 @@ jobs:
               mv "$file" "build/Release/ARM64/$(basename "$file" .arm64.dll).dll"
             done
           fi
+
+      - name: Build ExplorerPatcher (IA-32)
+        if: github.event.inputs.config == ''
+        working-directory: ${{env.GITHUB_WORKSPACE}}
+        run: |
+          msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=IA-32 ${{env.SOLUTION_FILE_PATH}}
 
       - name: Build ExplorerPatcher (amd64)
         if: github.event.inputs.config == ''
@@ -192,7 +198,7 @@ jobs:
       # build/Release/x64/ep_setup.exe -> build/Release/ep_setup.exe
       # build/Release/ARM64/ep_setup.exe -> build/Release/ep_setup_arm64.exe
       - name: Stage files for release
-        if: github.ref == 'refs/heads/master' && github.event.inputs.ref == ''
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         shell: bash
         run: |
           if [ -d "build/Release/x64" ] && ls build/Release/x64/ep_setup.exe 1> /dev/null 2>&1; then
@@ -205,7 +211,7 @@ jobs:
       - name: Generate release name
         shell: bash
         working-directory: build/Release/x64
-        if: github.ref == 'refs/heads/master' && github.event.inputs.ref == ''
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         run: |
           echo "data=$(./ep_generate_release_name.exe)" >> $GITHUB_OUTPUT
         id: release_name
@@ -213,7 +219,7 @@ jobs:
       - name: Generate release notes
         shell: bash
         working-directory: build/Release/x64
-        if: github.ref == 'refs/heads/master' && github.event.inputs.ref == ''
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         run: |
           echo "data<<EP_RELEASE_DESCRIPTION_DELIM" >> $GITHUB_OUTPUT
           echo "$(./ep_generate_release_description.exe ${STEPS_VARS_OUTPUTS_SHA_SHORT} ${STEPS_VARS_OUTPUTS_BRANCH} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_OUTPUT
@@ -224,14 +230,14 @@ jobs:
           STEPS_VARS_OUTPUTS_BRANCH: ${{ steps.vars.outputs.branch }}
 
       - name: Create/update release (valinet)
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # 2.5.0
-        if: github.repository_owner == 'valinet' && github.ref == 'refs/heads/master' && github.event.inputs.ref == ''
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # 2.6.1
+        if: github.repository_owner == 'valinet' && github.event_name == 'push' && github.ref_type == 'tag'
         id: create_release
         with:
           draft: false
           prerelease: ${{ !startsWith(github.event.head_commit.message, 'rel_') }}
           name: ${{ steps.release_name.outputs.data }}
-          tag_name: ${{ steps.release_name.outputs.data }}_${{ steps.vars.outputs.sha_short }}
+          tag_name: ${{ github.ref_name }}
           body: ${{ steps.release_description.outputs.data }}
           files: |
             build/Release/ep_setup.exe
@@ -240,18 +246,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT }}
 
       - name: Create/update release (forks)
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # 2.5.0
-        if: github.repository_owner != 'valinet' && github.ref == 'refs/heads/master' && github.event.inputs.ref == ''
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # 2.6.1
+        if: github.repository_owner != 'valinet' && github.event_name == 'push' && github.ref_type == 'tag'
         id: create_release_fork
         with:
           draft: false
           prerelease: ${{ !startsWith(github.event.head_commit.message, 'rel_') }}
           name: ${{ steps.release_name.outputs.data }}
-          tag_name: ${{ steps.release_name.outputs.data }}_${{ steps.vars.outputs.sha_short }}
+          tag_name: ${{ github.ref_name }}
           body: ${{ steps.release_description.outputs.data }}
           files: |
             build/Release/ep_setup.exe
             build/Release/ep_setup_arm64.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
