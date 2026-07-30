@@ -2,6 +2,58 @@
 
 This document includes the same release notes as in the [Releases](https://github.com/valinet/ExplorerPatcher/releases) section on GitHub.
 
+## 26100.8457.70
+
+Tested on OS builds 22621.4317 x64, 22631.7079 x64, 26100.6899 ARM64, 26200.8457 x64, 26300.8493 x64, 26300.8758 x64, 28000.2269 ARM64, and 29617.1000 x64.
+
+##### 1
+
+* **🚨 Important: Fixed 10 taskbar and 10 Start menu crashing on 26xxx.8474+ and 28xxx.2298+.**
+  * Due to 10 Start menu's tile layout engine being removed from `StartTileData.dll`, the 10 Start menu option has been temporarily hidden. (bf36cde, 8a5b8ba)
+  * *The 10 Start menu option has been made available again in version 70.2.*
+* **Highlight:** Fixed Windows 10 battery flyout crashing on 25951+. (659c2d0)
+  * As a side effect, the network flyout buttons had to be reverted to pre-24H2. Fixes #4691.
+* Changes to "Primary taskbar location on screen" in EP properties now reflect immediately. (6c9b41d)
+* Windows 11 taskbar autohide is no longer modified on Explorer boot. (e6becc9)
+* "Open Start in All apps by default" is now hidden when the new 11 Start menu is enabled. (#4648) (d8f1d1c)
+* Windows 10 Start menu on 21996-22000.51 now no longer crashes. (39ac219)
+* Fixed regedit.exe crashing when switching to thumbnail view in the import/export registry file dialog. (#3940) (80be85d)
+* Updated pattern matching code to support recent builds especially with 26H1 ARM64. (677fd9f, e641e0a, e77123a, 3c8e79f, 854770b, 04dd52b, ce22476, baf0fdb, b532116, c0adee2, eefa0bf, 420e112, 3be4f3f, 1bf0d81, 47d7481, 31d2c23, bdf95c3, fe8cc2b, 1be3c79)
+  * Improved efficiency on ARM64.
+* Added Greek translations. Thanks @KonVetsos!
+
+**ep_taskbar:**
+* Now supports all 43 Windows 11 languages.
+* Fixed reimplementation mistakes in system tray and some other places.
+* [For mod developers] Changed ep_taskbar's DLL names from numbers to the codename of the first major release a single variant supports. (cc36e34)
+* [For mod developers] TrayUI no longer inherits `Microsoft::WRL::RuntimeClass`; vtables are now stable on builds with multiple `ITrayUI` revisions like `ep_taskbar.ge.dll` (formerly `ep_taskbar.5.dll`).
+
+##### 2
+
+* Introduced a reimplemented 10 Start menu tile layout engine that was removed in 26xxx.8474. (688514f)
+  * *A full restoration has been introduced in version 70.4*.
+* Added an executable name blacklist to prevent shell extension from loading in certain applications. (#4819) (991b8ca)
+* Updated 10 Start menu animation patterns for 28xxx.2149+ ARM64. (c480fc2)
+
+**ep_taskbar:**
+* Fixed a deadlock relating to base EP reporting taskbar position and the taskbar reporting search/task view button location and size both to `WindowsUdk.ShellCommon.dll` during taskbar initialization.
+
+##### 3
+
+* Start10: Mitigated a new breakage related to removal of tablet mode code currently being rolled out on 25H2 Experimental builds 8553, 8687, 8697, and beyond. Thanks @AllieTheFox! (94cc68e)
+* Start10: Pinned tiles are no longer reset after 5 consecutive crashes. Thanks @AllieTheFox! (cc85aaf)
+* GUI: Fixed the wording of some strings. Thanks @Sefinek! (626ebf2)
+
+##### 4
+
+* Fixed 10 (EP) taskbar crashing on 28xxx.2298+ (26H1), x64 only. ARM64 is not affected. (#5063)
+* Restored 10 Start tile pinning behavior on 26xxx.8474+ and 28xxx.2298+. (96839ff, 0ecde00)
+* Fixed Explorer Pin to Start/Unpin from Start context menu action behavior when 10 Start is used on 226xx.3420+. (96839ff, 0ecde00)
+* Switching between 10 and 11 Start without restarting Explorer no longer results in broken open/close animation. (f022f50, 59a6a42)
+* Fixed properties dialog crash with [`hide-titlebar-elements`](https://windhawk.net/mods/hide-titlebar-elements) Windhawk mod. Thanks @ypx13 for the report and @AllieTheFox for the work! (0fad899)
+* Fixed Explorer crashlooping with [`file-explorer-content-animation`](https://windhawk.net/mods/file-explorer-content-animation) Windhawk mod. (#5098, 85e3d3a)
+* Fixed Simple Window Switcher not showing up when 11 taskbar is used. (#4982, 91bbc0e)
+
 ## 26100.4946.69
 
 Tested on OS builds 26100.4946, 26100.5074, 26200.5751, and 26220.6682.
@@ -51,10 +103,6 @@ Tested on OS builds 26100.4946, 26100.5074, 26200.5751, and 26220.6682.
 * Taskbar10: These settings now take effect on ep_taskbar: (#4097) (48e1de3)
   * Pinned items act as quick launch (don't group with active apps)
   * When the taskbar shows button labels, remove the extra gap around pinned items
-
-Known issues we will address in the short term:
-* Changing weather icon pack to "Microsoft" has no effect.
-* On Nickel (Windows 11 22H2/23H2), when the new Windows 11 Start menu is enabled, using Windows 10 or Windows 10 (ExplorerPatcher) taskbar will crashloop explorer.exe.
 
 ## 22631.5335.68
 

@@ -316,9 +316,11 @@
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;b %R:1325%
 ;"Virtualized_{D17F1E1A-5919-4427-8F89-A1A8503CA3EB}_StartDocked_DisableRecommendedSection"=dword:00000000
+;s StartMenu_Windows11Old !IsRedesignedWin11StartMenu
 [HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\StartPage]
 ;b %R:1326%
 "MakeAllAppsDefault"=dword:00000000
+;g StartMenu_Windows11Old
 ;g StartMenu_Windows11
 ;s StartMenu_Windows10 IsWindows10StartMenu
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
@@ -779,10 +781,10 @@
 ;T %R:2001%
 ;e %R:201%
 ;e %VERSIONINFORMATIONSTRING%
-;t © 2006-2025 VALINET Solutions SRL. All rights reserved.
+;t © 2006-2026 VALINET Solutions SRL. All rights reserved.
 ;e 
 ;e %R:2003%
-;e %R:2004%
+;e %AUTHORSSTRING%
 ;t %OSVERSIONSTRING%
 ;y %R:2006% (https://github.com/valinet) 🡕
 ;https://github.com/valinet

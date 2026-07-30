@@ -13,7 +13,7 @@ processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 #ifdef WITH_ENCRYPTION
 #include "rijndael-alg-fst.c" // Include the C file for __forceinline to work
 #endif
-#pragma comment(lib, "zs.lib")
+#pragma comment(lib, "libzs.lib")
 
 static UINT g_uFailureLine;
 
@@ -1330,7 +1330,7 @@ int WINAPI wWinMain(
             if (CHECK_OK(bOk)) bOk = InstallResource(bInstall, hInstance, zipFile, "WebView2Loader.dll", wszPath, L"WebView2Loader.dll");
         }
         ProcessTaskbarDlls(&bOk, bInstall, FALSE, hInstance, zipFile, wszPath);
-        const WCHAR* possibleDirs[] =
+        const WCHAR* const possibleDirs[] =
         {
             L"ar-SA", L"bg-BG", L"ca-ES", L"cs-CZ", L"da-DK", L"de-DE", L"el-GR", L"en-GB", L"en-US", L"es-ES",
             L"es-MX", L"et-EE", L"eu-ES", L"fi-FI", L"fr-CA", L"fr-FR", L"gl-ES", L"he-IL", L"hr-HR", L"hu-HU",
@@ -1402,6 +1402,8 @@ int WINAPI wWinMain(
                 RegDeleteKeyW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\ShellServiceObjects\\{C2796011-81BA-4148-8FCA-C6643245113F}");
             }
         }
+
+        if (CHECK_OK(bOk)) bOk = InstallResource(bInstall && IsWindows11(), hInstance, zipFile, "ep_starttiledata.dll", wszPath, L"ep_starttiledata.dll");
 
         // --------------------------------------------------------------------------------
 

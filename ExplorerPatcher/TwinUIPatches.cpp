@@ -380,7 +380,6 @@ extern DWORD bNoMenuAccelerator;
 extern DWORD dwAltTabSettings;
 extern DWORD dwSnapAssistSettings;
 extern DWORD dwStartShowClassicMode;
-extern HANDLE hWin11AltTabInitialized;
 
 typedef HRESULT(*ImmersiveContextMenuHelper_ApplyOwnerDrawToMenu_t)(HMENU hmenu, HWND hWnd, POINT* pptOrigin, unsigned int icmoFlags, void* srgRenderingData);
 extern ImmersiveContextMenuHelper_ApplyOwnerDrawToMenu_t ImmersiveContextMenuHelper_ApplyOwnerDrawToMenuFunc;
@@ -1002,13 +1001,6 @@ LSTATUS twinuipcshell_RegGetValueW(
             }
         }
 
-        if (!bOldTaskbar && hWin11AltTabInitialized)
-        {
-            SetEvent(hWin11AltTabInitialized);
-            CloseHandle(hWin11AltTabInitialized);
-            hWin11AltTabInitialized = nullptr;
-        }
-
         lRes = ERROR_SUCCESS;
     }
 
@@ -1533,6 +1525,7 @@ BOOL Moment2PatchHardwareConfirmator(HMODULE hHardwareConfirmator, PBYTE pSearch
     {
         cleanupBegin = match2 + 17;
         cleanupEnd = match2 + 38; // Exclusive
+        if (cleanupBegin >= pSearchBegin + cbSearch || cleanupEnd >= pSearchBegin + cbSearch) return FALSE;
         printf("[HC] cleanup = %llX-%llX\n", cleanupBegin - (PBYTE)hHardwareConfirmator, cleanupEnd - (PBYTE)hHardwareConfirmator);
         if (*cleanupBegin != 0x49 || *cleanupEnd != 0x90 /*Already NOP here*/) return FALSE;
     }
@@ -1553,6 +1546,7 @@ BOOL Moment2PatchHardwareConfirmator(HMODULE hHardwareConfirmator, PBYTE pSearch
     // Execution
     DWORD dwOldProtect = 0;
     SIZE_T totalSize = sizeof(shellcode) + 5;
+    if (writeAt + totalSize >= pSearchBegin + cbSearch) return FALSE;
     if (!VirtualProtect(writeAt, totalSize, PAGE_EXECUTE_READWRITE, &dwOldProtect)) return FALSE;
     memcpy(writeAt, shellcode, sizeof(shellcode));
     PBYTE jmpLoc = writeAt + sizeof(shellcode);
@@ -1826,6 +1820,74 @@ HRESULT CStartExperienceManager_OnViewHiddenHook(void* eventHandler, CSingleView
     return CStartExperienceManager_OnViewHiddenFunc(eventHandler, pSender);
 }
 
+struct StartMenuAnimationHidePatch
+{
+    // Please initialize all fields in FixStartMenuAnimation()
+
+    PBYTE _pSite1;
+    PBYTE _pSite2;
+#if defined(_M_X64)
+    BYTE _rgOriginalSite1[12];
+    BYTE _rgOriginalSite2[12];
+#elif defined(_M_ARM64)
+    BYTE _rgOriginalSite1[8];
+    BYTE _rgOriginalSite2[8];
+#endif
+
+    void ApplyOrRevert(bool bApply) const
+    {
+        if (_pSite1 != nullptr && _pSite2 != nullptr)
+        {
+            if (bApply)
+            {
+                ApplyForOne(_pSite1);
+                ApplyForOne(_pSite2);
+            }
+            else
+            {
+                RevertForOne(_pSite1, _rgOriginalSite1, sizeof(_rgOriginalSite1));
+                RevertForOne(_pSite2, _rgOriginalSite2, sizeof(_rgOriginalSite2));
+            }
+        }
+    }
+
+private:
+    static void ApplyForOne(PBYTE pTarget)
+    {
+#if defined(_M_X64)
+        DWORD dwOldProtect;
+        if (VirtualProtect(pTarget, 12, PAGE_EXECUTE_READWRITE, &dwOldProtect))
+        {
+            memset(pTarget, 0x90, 12); // nop
+            VirtualProtect(pTarget, 12, dwOldProtect, &dwOldProtect);
+        }
+#elif defined(_M_ARM64)
+        DWORD dwOldProtect;
+        if (VirtualProtect(pTarget, 8, PAGE_EXECUTE_READWRITE, &dwOldProtect))
+        {
+            *(DWORD*)(pTarget + 0) = 0xD503201F; // NOP
+            *(DWORD*)(pTarget + 4) = 0xD503201F; // NOP
+            VirtualProtect(pTarget, 8, dwOldProtect, &dwOldProtect);
+        }
+#endif
+    }
+
+    static void RevertForOne(PBYTE pTarget, const void* pOriginalBytes, size_t cbOriginalBytes)
+    {
+        DWORD dwOldProtect;
+        if (VirtualProtect(pTarget, cbOriginalBytes, PAGE_EXECUTE_READWRITE, &dwOldProtect))
+        {
+            memcpy(pTarget, pOriginalBytes, cbOriginalBytes);
+            VirtualProtect(pTarget, cbOriginalBytes, dwOldProtect, &dwOldProtect);
+        }
+    }
+} g_StartMenuAnimationHidePatch = {};
+
+EXTERN_C void StartMenuAnimationHidePatch_ApplyOrRevert(BOOL bApply)
+{
+    g_StartMenuAnimationHidePatch.ApplyOrRevert(bApply != 0);
+}
+
 BOOL FixStartMenuAnimation(HMODULE hTwinuiPcshell, PBYTE pSearchBegin, size_t cbSearch)
 {
     if (!pSearchBegin || !cbSearch)
@@ -1859,17 +1921,17 @@ BOOL FixStartMenuAnimation(HMODULE hTwinuiPcshell, PBYTE pSearchBegin, size_t cb
         matchVtable += 7 + *(int*)(matchVtable + 3);
     }
 #elif defined(_M_ARM64)
-    // * Pattern for Nickel
+    // * Pattern for Cobalt and Nickel
     //   ```
-    //   69 A2 03 A9 ?? ?? 00 ?? 08 ?? ?? 91 ?? ?? 00 ?? 29 ?? ?? 91 68 32 00 F9
+    //   69 A2 03 A9 ?? ?? 00 ?? 08 ?? ?? 91 ?? ?? 00 ?? 29 ?? ?? 91 ?? 32 00 F9 60 ?? ?? 91 ?? 26 00 F9 ?? ?? ?? ?? 1F 20 03 D5
     //               ^^^^^^^^^^^+^^^^^^^^^^^
     //   ```
     // Ref: CStartExperienceManager::CStartExperienceManager()
     PBYTE matchVtable = (PBYTE)FindPattern_4_(
         pSearchBegin,
         cbSearch,
-        "\x69\xA2\x03\xA9\x00\x00\x00\x00\x08\x00\x00\x91\x00\x00\x00\x00\x29\x00\x00\x91\x68\x32\x00\xF9",
-        "xxxx??x?x??x??x?x??xxxxx"
+        "\x69\xA2\x03\xA9\x00\x00\x00\x00\x08\x00\x00\x91\x00\x00\x00\x00\x29\x00\x00\x91\x00\x32\x00\xF9\x60\x00\x00\x91\x00\x26\x00\xF9\x00\x00\x00\x00\x1F\x20\x03\xD5",
+        "xxxx??x?x??x??x?x??x?xxxx??x?xxx????xxxx"
     );
     if (matchVtable)
     {
@@ -1933,7 +1995,15 @@ BOOL FixStartMenuAnimation(HMODULE hTwinuiPcshell, PBYTE pSearchBegin, size_t cb
     );
     if (matchSingleViewShellExperienceFields)
     {
-        g_SMAnimationPatchOffsets.startExperienceManager_singleViewShellExperience = (int)ARM64_DecodeADD(*(DWORD*)(matchSingleViewShellExperienceFields + 8));
+        DWORD insnADD = ARM64_DecodeADD(*(DWORD*)(matchSingleViewShellExperienceFields + 8));
+        if (insnADD != 0)
+        {
+            g_SMAnimationPatchOffsets.startExperienceManager_singleViewShellExperience = (int)insnADD;
+        }
+        else
+        {
+            matchSingleViewShellExperienceFields = nullptr;
+        }
     }
 #endif
     if (matchSingleViewShellExperienceFields)
@@ -2365,15 +2435,6 @@ BOOL FixStartMenuAnimation(HMODULE hTwinuiPcshell, PBYTE pSearchBegin, size_t cb
             printf("[SMA] matchHideB in CStartExperienceManager::Hide() = %llX\n", matchHideB - (PBYTE)hTwinuiPcshell);
         }
     }
-    auto hide_doForOne = [](PBYTE pTarget) -> void
-    {
-        DWORD dwOldProtect;
-        if (VirtualProtect(pTarget, 12, PAGE_EXECUTE_READWRITE, &dwOldProtect))
-        {
-            memset(pTarget, 0x90, 12); // nop
-            VirtualProtect(pTarget, 12, dwOldProtect, &dwOldProtect);
-        }
-    };
 #elif defined(_M_ARM64)
     // Find for nop targets:
     //   MOV             W??, #3
@@ -2383,9 +2444,10 @@ BOOL FixStartMenuAnimation(HMODULE hTwinuiPcshell, PBYTE pSearchBegin, size_t cb
     //     22000.2899 0011100100_001010001011_10101_11011
     //     22621.1918 0011100100_001010100011_10011_11011
     //     26100.5551 0011100100_001011010011_10100_11010
+    //     28000.2149 0011100100_001011010011_11001_10100
     //     29553.1000 0011100100_001011010011_10101_10100
     //     P:         0011100100_001010000011_10000_10000 = 390A0E10 = 10 0E 0A 39
-    //     M:         1111111111_111110000111_11000_10000 = FFFE1F10 = 10 1F FE FF
+    //     M:         1111111111_111110000111_10000_10000 = FFFE1E10 = 10 1E FE FF
     // Nop if followed by a Hide() call
     //   E1 03 ?? 2A ?? ?? 04 91 ?? ?? ?? ?? ?? 03 00 2A
     // Perform on exactly two matches
@@ -2395,7 +2457,7 @@ BOOL FixStartMenuAnimation(HMODULE hTwinuiPcshell, PBYTE pSearchBegin, size_t cb
             pBegin,
             cbSearch,
             "\x60\x00\x80\x52\x10\x0E\x0A\x39",
-            "\xE0\xFF\xFF\xFF\x10\x1F\xFE\xFF",
+            "\xE0\xFF\xFF\xFF\x10\x1E\xFE\xFF",
             8
         );
         if (pMovStrb)
@@ -2436,16 +2498,6 @@ BOOL FixStartMenuAnimation(HMODULE hTwinuiPcshell, PBYTE pSearchBegin, size_t cb
             printf("[SMA] matchHideB in CStartExperienceManager::Hide() = %llX\n", matchHideB - (PBYTE)hTwinuiPcshell);
         }
     }
-    auto hide_doForOne = [](PBYTE pTarget) -> void
-    {
-        DWORD dwOldProtect;
-        if (VirtualProtect(pTarget, 8, PAGE_EXECUTE_READWRITE, &dwOldProtect))
-        {
-            *(DWORD*)(pTarget + 0) = 0xD503201F; // NOP
-            *(DWORD*)(pTarget + 4) = 0xD503201F; // NOP
-            VirtualProtect(pTarget, 8, dwOldProtect, &dwOldProtect);
-        }
-    };
 #endif
 
     if (!matchVtable
@@ -2468,11 +2520,11 @@ BOOL FixStartMenuAnimation(HMODULE hTwinuiPcshell, PBYTE pSearchBegin, size_t cb
     REPLACE_VTABLE_ENTRY(vtable, 6, CStartExperienceManager_OnViewCloaking);
     REPLACE_VTABLE_ENTRY(vtable, 10, CStartExperienceManager_OnViewHidden);
 
-    if (dwStartShowClassicMode)
-    {
-        hide_doForOne(matchHideA);
-        hide_doForOne(matchHideB);
-    }
+    g_StartMenuAnimationHidePatch._pSite1 = matchHideA;
+    g_StartMenuAnimationHidePatch._pSite2 = matchHideB;
+    memcpy(g_StartMenuAnimationHidePatch._rgOriginalSite1, matchHideA, sizeof(g_StartMenuAnimationHidePatch._rgOriginalSite1));
+    memcpy(g_StartMenuAnimationHidePatch._rgOriginalSite2, matchHideB, sizeof(g_StartMenuAnimationHidePatch._rgOriginalSite2));
+    g_StartMenuAnimationHidePatch.ApplyOrRevert(dwStartShowClassicMode != 0);
 
     int rv = -1;
     if (CStartExperienceManager_GetMonitorInformationFunc)
@@ -2762,6 +2814,7 @@ namespace ABI::Windows::UI::Xaml
 
 static struct
 {
+    int jumpViewExperienceManager_trayStuckPlace;
     int jumpViewExperienceManager_rcWorkArea;
 } g_JVPositioningPatchOffsets;
 
@@ -2921,7 +2974,7 @@ HRESULT CJumpViewExperienceManager_EnsureWindowPositionHook(void* _this, CSingle
     UINT dpi;
     RETURN_IF_FAILED(CJumpViewExperienceManager_GetMonitorInformation(
         _this, ptAnchor, &rcWorkArea, &dpi,
-        (EDGEUI_TRAYSTUCKPLACE*)((PBYTE)_this + 0x1F0))); // 850
+        (EDGEUI_TRAYSTUCKPLACE*)((PBYTE)_this + g_JVPositioningPatchOffsets.jumpViewExperienceManager_trayStuckPlace))); // 850
     *((RECT*)((PBYTE)_this + g_JVPositioningPatchOffsets.jumpViewExperienceManager_rcWorkArea)) = rcWorkArea;
 
     int width, height;
@@ -2944,15 +2997,19 @@ BOOL FixJumpViewPositioning(HMODULE hTwinuiPcshell, PBYTE pSearchBegin, size_t c
 
     // EDGEUI_TRAYSTUCKPLACE CJumpViewExperienceManager::m_trayStuckPlace
 #if defined(_M_X64)
-    // 8B 8B B0 01 00 00 BF 5C 00 00 00 85 C9
+    // 8B 8B ?? ?? 00 00 BF 5C 00 00 00 85 C9
     //       ^^^^^^^^^^^
     // Ref: CJumpViewExperienceManager::OnViewUncloaking()
     PBYTE matchOffsetTrayStuckPlace = (PBYTE)FindPattern(
         pSearchBegin,
         cbSearch,
-        "\x8B\x8B\xB0\x01\x00\x00\xBF\x5C\x00\x00\x00\x85\xC9",
-        "xxxxxxxxxxxxx"
+        "\x8B\x8B\x00\x00\x00\x00\xBF\x5C\x00\x00\x00\x85\xC9",
+        "xx??xxxxxxxxx"
     );
+    if (matchOffsetTrayStuckPlace)
+    {
+        g_JVPositioningPatchOffsets.jumpViewExperienceManager_trayStuckPlace = 0x40 + *(int*)(matchOffsetTrayStuckPlace + 2);
+    }
 #elif defined(_M_ARM64)
     // ?? ?? 41 B9 89 0B 80 52 A8 01 00 34 1F 05 00 71 20 01 00 54 1F 09 00 71 A0 00 00 54 1F 0D 00 71 01 01 00 54 69 0B 80 52
     // ^^^^^^^^^^^       Important instr. to distinguish from MeetNowExperienceManager::OnViewUncloaking() in GE > !!!!!!!!!!!
@@ -2963,7 +3020,19 @@ BOOL FixJumpViewPositioning(HMODULE hTwinuiPcshell, PBYTE pSearchBegin, size_t c
         "\x41\xB9\x89\x0B\x80\x52\xA8\x01\x00\x34\x1F\x05\x00\x71\x20\x01\x00\x54\x1F\x09\x00\x71\xA0\x00\x00\x54\x1F\x0D\x00\x71\x01\x01\x00\x54\x69\x0B\x80\x52",
         "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     );
-    if (!matchOffsetTrayStuckPlace)
+    if (matchOffsetTrayStuckPlace)
+    {
+        int off = (int)ARM64_DecodeLDRIMMW(*(DWORD*)matchOffsetTrayStuckPlace);
+        if (off != -1)
+        {
+            g_JVPositioningPatchOffsets.jumpViewExperienceManager_trayStuckPlace = 0x40 + off;
+        }
+        else
+        {
+            matchOffsetTrayStuckPlace = nullptr;
+        }
+    }
+    else
     {
         // 29553+
         // ?? ?? 41 B9 C8 01 00 34 1F 05 00 71 40 01 00 54 1F 09 00 71 C0 00 00 54 89 0B 80 52
@@ -2975,6 +3044,18 @@ BOOL FixJumpViewPositioning(HMODULE hTwinuiPcshell, PBYTE pSearchBegin, size_t c
             "\x41\xB9\xC8\x01\x00\x34\x1F\x05\x00\x71\x40\x01\x00\x54\x1F\x09\x00\x71\xC0\x00\x00\x54\x89\x0B\x80\x52",
             "xxxxxxxxxxxxxxxxxxxxxxxxxx"
         );
+        if (matchOffsetTrayStuckPlace)
+        {
+            int off = (int)ARM64_DecodeLDRIMMW(*(DWORD*)matchOffsetTrayStuckPlace);
+            if (off != -1)
+            {
+                g_JVPositioningPatchOffsets.jumpViewExperienceManager_trayStuckPlace = 0x40 + off;
+            }
+            else
+            {
+                matchOffsetTrayStuckPlace = nullptr;
+            }
+        }
     }
 #endif
     if (matchOffsetTrayStuckPlace)
@@ -3009,34 +3090,56 @@ BOOL FixJumpViewPositioning(HMODULE hTwinuiPcshell, PBYTE pSearchBegin, size_t c
         // Without Feature_TaskbarJumplistOnHover (48980211)
         // 01 38 40 F9 07 00 07 91
         // ----------- ^^^^^^^^^^^
-        // If this matches then the offset of m_rcWorkArea is +0x200
+        //   ADD             X7, X??, #0x???
+        //     P: 10010001_00_000000000000_00000_00111 = 91000007 = 07 00 00 91
+        //     M: 11111111_11_000000000000_00000_11111 = FFC0001F = 1F 00 C0 FF
         // Ref: CJumpViewExperienceManager::OnViewCloaking()
-        matchOffsetRcWorkArea = (PBYTE)FindPattern_4_(
+        matchOffsetRcWorkArea = (PBYTE)FindPatternBitMask_4_(
             matchOffsetTrayStuckPlace + 38,
             128,
-            "\x01\x38\x40\xF9\x07\x00\x07\x91",
-            "xxxxxxxx"
+            "\x01\x38\x40\xF9\x07\x00\x00\x91",
+            "\xFF\xFF\xFF\xFF\x1F\x00\xC0\xFF",
+            8
         );
         if (matchOffsetRcWorkArea)
         {
-            g_JVPositioningPatchOffsets.jumpViewExperienceManager_rcWorkArea = 0x200;
+            DWORD insnADD = ARM64_DecodeADD(*(DWORD*)(matchOffsetRcWorkArea + 8));
+            if (insnADD != 0)
+            {
+                g_JVPositioningPatchOffsets.jumpViewExperienceManager_rcWorkArea = 0x40 + (int)insnADD;
+            }
+            else
+            {
+                matchOffsetRcWorkArea = nullptr;
+            }
         }
-        if (!matchOffsetRcWorkArea)
+        else
         {
             // With Feature_TaskbarJumplistOnHover (48980211)
-            // 22 01 03 32 67 32 07 91
-            //             ^^^^^^^^^^^
-            // If this matches then the offset of m_rcWorkArea is +0x20C
+            // 61 3A 40 F9 22 01 03 32 67 32 07 91
+            // -----------             ^^^^^^^^^^^
+            //   ADD             X7, X??, #0x???
+            //     P: 10010001_00_000000000000_00000_00111 = 91000007 = 07 00 00 91
+            //     M: 11111111_11_000000000000_00000_11111 = FFC0001F = 1F 00 C0 FF
             // Ref: CJumpViewExperienceManager::OnViewCloaking()
-            matchOffsetRcWorkArea = (PBYTE)FindPattern_4_(
+            matchOffsetRcWorkArea = (PBYTE)FindPatternBitMask_4_(
                 matchOffsetTrayStuckPlace + 38,
                 128,
-                "\x22\x01\x03\x32\x67\x32\x07\x91",
-                "xxxxxxxx"
+                "\x61\x3A\x40\xF9\x22\x01\x03\x32\x07\x00\x00\x91",
+                "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\x1F\x00\xC0\xFF",
+                12
             );
             if (matchOffsetRcWorkArea)
             {
-                g_JVPositioningPatchOffsets.jumpViewExperienceManager_rcWorkArea = 0x20C;
+                DWORD insnADD = ARM64_DecodeADD(*(DWORD*)(matchOffsetRcWorkArea + 8));
+                if (insnADD != 0)
+                {
+                    g_JVPositioningPatchOffsets.jumpViewExperienceManager_rcWorkArea = 0x40 + (int)insnADD;
+                }
+                else
+                {
+                    matchOffsetRcWorkArea = nullptr;
+                }
             }
         }
     }
@@ -3193,6 +3296,22 @@ void TryToFindTwinuiPCShellOffsets(DWORD* pOffsets)
             {
                 match += 4;
                 pOffsets[0] = (DWORD)(match + 5 + *(int*)(match + 1) - pFile);
+            }
+            else
+            {
+                // 48 8B 49 08 E8 ?? ?? ?? ?? 44 8A ?? E9 ?? ?? ?? ?? 48 8B 89
+                //                ^^^^^^^^^^^
+                // Ref: CMultitaskingViewFrame::v_WndProc()
+                match = (PBYTE)FindPattern(
+                    pSearchBegin, cbSearch,
+                    "\x48\x8B\x49\x08\xE8\x00\x00\x00\x00\x44\x8A\x00\xE9\x00\x00\x00\x00\x48\x8B\x89",
+                    "xxxxx????xx?x????xxx"
+                );
+                if (match)
+                {
+                    match += 4;
+                    pOffsets[0] = (DWORD)(match + 5 + *(int*)(match + 1) - pFile);
+                }
             }
 #elif defined(_M_ARM64)
             // ?? ?? 00 71 ?? ?? 00 54 ?? ?? 40 F9 E3 03 ?? AA E2 03 ?? AA E1 03 ?? 2A ?? ?? ?? ??
@@ -3676,8 +3795,7 @@ extern "C" void RunTwinUIPCShellPatches(symbols_addr* symbols_PTRS)
         }
     }
 
-    if ((global_rovi.dwBuildNumber > 22000 || global_rovi.dwBuildNumber == 22000 && global_ubr >= 65) // Allow on 22000.65+
-        && (bOldTaskbar || dwStartShowClassicMode))
+    if ((global_rovi.dwBuildNumber > 22000 || global_rovi.dwBuildNumber == 22000 && global_ubr >= 65) /*Allow on 22000.65+*/)
     {
         // Make sure crash counter is enabled. If one of the patches make Explorer crash while the start menu is open,
         // we don't want to softlock the user. The system reopens the start menu if Explorer terminates while it's open.
